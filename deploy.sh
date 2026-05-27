@@ -23,34 +23,10 @@ if [ -z "$GIT_TOKEN" ]; then
   exit 1
 fi
 
-# Setup local bin directory
-LOCAL_BIN="$HOME/.local/bin"
-mkdir -p "$LOCAL_BIN"
-export PATH="$LOCAL_BIN:$PATH"
-
-# Auto-install/download fzf if missing
+# Auto-install fzf if missing using apt
 if ! command -v fzf &>/dev/null; then
-  echo "fzf not found. Downloading..." >&2
-  
-  # Determine architecture
-  ARCH=$(uname -m)
-  FZF_URL=""
-  if [ "$ARCH" = "x86_64" ]; then
-    FZF_URL="https://github.com/junegunn/fzf/releases/download/v0.52.1/fzf-0.52.1-linux_amd64.tar.gz"
-  elif [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
-    FZF_URL="https://github.com/junegunn/fzf/releases/download/v0.52.1/fzf-0.52.1-linux_arm64.tar.gz"
-  else
-    echo "Unsupported architecture: $ARCH" >&2
-    exit 1
-  fi
-
-  # Download and extract to local bin
-  TEMP_TAR=$(mktemp)
-  curl -sSL "$FZF_URL" -o "$TEMP_TAR"
-  tar -xzf "$TEMP_TAR" -C "$LOCAL_BIN" fzf
-  rm -f "$TEMP_TAR"
-  chmod +x "$LOCAL_BIN/fzf"
-  echo "fzf downloaded successfully." >&2
+  echo "fzf not found. Installing via apt..." >&2
+  sudo apt-get install -y fzf
 fi
 
 # Ensure jq is installed
