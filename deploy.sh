@@ -56,6 +56,12 @@ if ! command -v jq &>/dev/null; then
   sudo apt-get install -y jq
 fi
 
+# Auto-install python3 and pip3 if missing using apt
+if ! command -v python3 &>/dev/null || ! command -v pip3 &>/dev/null; then
+  echo "Python3 or pip3 not found. Installing via apt..." >&2
+  sudo apt-get install -y python3 python3-pip
+fi
+
 # Fetch all repositories
 echo "Fetching GitHub repositories..." >&2
 PAGE=1
@@ -156,4 +162,14 @@ else
 fi
 
 echo "Now in directory: $(pwd)"
+
+# Install requirements.txt if present
+if [ -f requirements.txt ]; then
+  echo "requirements.txt found. Installing Python packages..." >&2
+  if pip3 install --help | grep -q 'break-system-packages'; then
+    pip3 install -r requirements.txt --break-system-packages
+  else
+    pip3 install -r requirements.txt
+  fi
+fi
 
