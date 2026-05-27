@@ -123,8 +123,12 @@ fi
 REPO_COUNT=$(echo "$REPOS" | wc -l)
 echo "Fetched $REPO_COUNT repositories." >&2
 
-# Select repository using fzf
-SELECTED=$(echo "$REPOS" | fzf --ansi --header="Select repository to deploy (Type to search, Enter to select, Esc to cancel)" --preview 'echo "URL: {2}"') || SELECTED=""
+# Select repository using fzf (optimized for mobile/narrow screens)
+SELECTED=$(echo "$REPOS" | fzf --ansi \
+  --header="Select repository to deploy (Type to search, Enter to select, Esc to cancel)" \
+  --with-nth=1 \
+  --preview='echo "URL: {2}"' \
+  --preview-window='down:1:wrap') || SELECTED=""
 
 if [ -z "$SELECTED" ]; then
   echo "Selection cancelled." >&2
