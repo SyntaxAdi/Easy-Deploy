@@ -62,6 +62,12 @@ if ! command -v python3 &>/dev/null || ! command -v pip3 &>/dev/null; then
   sudo apt-get install -y python3 python3-pip
 fi
 
+# Auto-install screen if missing using apt
+if ! command -v screen &>/dev/null; then
+  echo "screen not found. Installing via apt..." >&2
+  sudo apt-get install -y screen
+fi
+
 # Fetch all repositories
 echo "Fetching GitHub repositories..." >&2
 PAGE=1
@@ -172,4 +178,42 @@ if [ -f requirements.txt ]; then
     pip3 install -r requirements.txt
   fi
 fi
+
+# Scan for .env file
+if [ -f .env ]; then
+  echo ".env exists." >&2
+fi
+
+# List python files at root level
+PY_FILES=""
+for f in *.py; do
+  if [ -f "$f" ]; then
+    PY_FILES="${PY_FILES}${f}
+"
+  fi
+done
+PY_FILES=$(echo "$PY_FILES" | grep -v '^$')
+
+if [ -z "$PY_FILES" ]; then
+  echo "No Python files found in root directory." >&2
+  exit 1
+fi
+
+# Select main python file using fzf
+MAIN_FILE=$(echo "$PY_FILES" | fzf --ansi --header="Select the main Python file to start" --preview-window='hidden') || MAIN_FILE=""
+
+if [ -z "$MAIN_FILE" ]; then
+  echo "Main file selection cancelled." >&2
+  exit 1
+fi
+
+# Generate safe screen name
+SCREEN_NAME=$(echo "bot-${DIR_NAME}" | sed 's/[^a-zA-Z0-9_-]/-/g')
+
+# Start main file inside screen and detach
+echo "Starting $MAIN_FILE inside screen session $SCREEN_NAME..." >&2
+screen -dmS "$SCREEN_NAME" python3 "$MAIN_FILE"
+
+echo "Session started and detached." >&2
+echo "To view session, run: screen -r $SCREEN_NAME" >&2
 
