@@ -68,114 +68,171 @@ if ! command -v screen &>/dev/null; then
   sudo apt-get install -y screen
 fi
 
-# Fetch all repositories
-echo "Fetching GitHub repositories..." >&2
-PAGE=1
-REPOS=""
+# Choose operation mode
+echo "Choose operation mode:" >&2
+echo "1) Clone and deploy a new repository" >&2
+echo "2) Manage and redeploy an existing cloned repository" >&2
+read -p "Select option (1/2): " OP_MODE
 
-while true; do
-  RESPONSE_FILE=$(mktemp)
-  CURL_EXIT=0
-  HTTP_STATUS=$(curl -s -w "%{http_code}" -o "$RESPONSE_FILE" \
-    --connect-timeout 10 --max-time 30 \
-    -H "Authorization: Bearer $GIT_TOKEN" \
-    "https://api.github.com/user/repos?per_page=100&page=$PAGE") || CURL_EXIT=$?
+if [ "$OP_MODE" = "2" ]; then
+  # Find existing cloned repositories
+  EXISTING_REPOS=$(find . -maxdepth 2 -name ".git" -type d 2>/dev/null | sed 's|/\.git$||' | sed 's|^\./||' | grep -v '^$' | grep -v '^\.$') || EXISTING_REPOS=""
 
-  if [ "$CURL_EXIT" -ne 0 ]; then
-    echo "Error: curl command failed with exit code $CURL_EXIT." >&2
-    echo "Please check your network connection and DNS settings." >&2
-    rm -f "$RESPONSE_FILE"
-    exit 1
-  fi
-
-  if [ "$HTTP_STATUS" -ne 200 ]; then
-    echo "Error: GitHub API returned HTTP status $HTTP_STATUS." >&2
-    cat "$RESPONSE_FILE" >&2
-    echo "" >&2
-    rm -f "$RESPONSE_FILE"
-    exit 1
-  fi
-
-  RESPONSE=$(cat "$RESPONSE_FILE")
-  rm -f "$RESPONSE_FILE"
-
-  if ! echo "$RESPONSE" | jq empty &>/dev/null; then
-    echo "Error: Invalid JSON response received from GitHub." >&2
-    exit 1
-  fi
-
-  COUNT=$(echo "$RESPONSE" | jq '. | length' 2>/dev/null || echo 0)
-  if [ "$COUNT" -eq 0 ]; then
-    break
-  fi
-
-  PAGE_REPOS=$(echo "$RESPONSE" | jq -r '.[] | "\(.full_name) \(.html_url)"')
-  if [ -n "$REPOS" ]; then
-    REPOS="${REPOS}
-${PAGE_REPOS}"
+  if [ -z "$EXISTING_REPOS" ]; then
+    echo "No existing cloned repositories found. Switching to cloning mode..." >&2
+    OP_MODE="1"
   else
-    REPOS="$PAGE_REPOS"
+    # Select existing repo using fzf
+    SELECTED_DIR=$(echo "$EXISTING_REPOS" | fzf --ansi --header="Select an existing repository directory" --preview-window='hidden') || SELECTED_DIR=""
+    
+    if [ -z "$SELECTED_DIR" ]; then
+      echo "Selection cancelled." >&2
+      exit 1
+    fi
+    
+    DIR_NAME="$SELECTED_DIR"
+    cd "$DIR_NAME"
+    echo "Selected directory: $DIR_NAME" >&2
+
+    # Choose actions for existing repo
+    echo "Choose action for $DIR_NAME:" >&2
+    echo "1) Pull latest updates and restart bot" >&2
+    echo "2) Reconfigure/update .env and restart bot" >&2
+    echo "3) Reinstall python dependencies and restart bot" >&2
+    echo "4) Just restart bot" >&2
+    read -p "Select action (1/2/3/4): " MANAGE_OPT
+
+    if [ "$MANAGE_OPT" = "1" ]; then
+      echo "Pulling latest updates..." >&2
+      git pull
+      INSTALL_DEPS=1
+    elif [ "$MANAGE_OPT" = "2" ]; then
+      echo "Removing current .env for reconfiguration..." >&2
+      rm -f .env
+    elif [ "$MANAGE_OPT" = "3" ]; then
+      echo "Flagging dependencies for reinstall..." >&2
+      INSTALL_DEPS=1
+      FORCE_REINSTALL=1
+    fi
   fi
-
-  if [ "$COUNT" -lt 100 ]; then
-    break
-  fi
-  PAGE=$((PAGE+1))
-done
-
-# Filter out any empty lines
-REPOS=$(echo "$REPOS" | grep -v '^$')
-
-if [ -z "$REPOS" ]; then
-  echo "No repositories found." >&2
-  exit 0
 fi
 
-# Count repositories
-REPO_COUNT=$(echo "$REPOS" | wc -l)
-echo "Fetched $REPO_COUNT repositories." >&2
+if [ "$OP_MODE" = "1" ]; then
+  # Fetch all repositories
+  echo "Fetching GitHub repositories..." >&2
+  PAGE=1
+  REPOS=""
 
-# Select repository using fzf (optimized for mobile/narrow screens)
-SELECTED=$(echo "$REPOS" | fzf --ansi \
-  --header="Select repository to deploy (Type to search, Enter to select, Esc to cancel)" \
-  --with-nth=1 \
-  --preview='echo "URL: {2}"' \
-  --preview-window='down:1:wrap') || SELECTED=""
+  while true; do
+    RESPONSE_FILE=$(mktemp)
+    CURL_EXIT=0
+    HTTP_STATUS=$(curl -s -w "%{http_code}" -o "$RESPONSE_FILE" \
+      --connect-timeout 10 --max-time 30 \
+      -H "Authorization: Bearer $GIT_TOKEN" \
+      "https://api.github.com/user/repos?per_page=100&page=$PAGE") || CURL_EXIT=$?
 
-if [ -z "$SELECTED" ]; then
-  echo "Selection cancelled." >&2
-  exit 1
-fi
+    if [ "$CURL_EXIT" -ne 0 ]; then
+      echo "Error: curl command failed with exit code $CURL_EXIT." >&2
+      echo "Please check your network connection and DNS settings." >&2
+      rm -f "$RESPONSE_FILE"
+      exit 1
+    fi
 
-REPO_NAME=$(echo "$SELECTED" | awk '{print $1}')
-REPO_URL=$(echo "$SELECTED" | awk '{print $2}')
+    if [ "$HTTP_STATUS" -ne 200 ]; then
+      echo "Error: GitHub API returned HTTP status $HTTP_STATUS." >&2
+      cat "$RESPONSE_FILE" >&2
+      echo "" >&2
+      rm -f "$RESPONSE_FILE"
+      exit 1
+    fi
 
-# Extract directory name from URL
-DIR_NAME=$(basename "$REPO_URL")
+    RESPONSE=$(cat "$RESPONSE_FILE")
+    rm -f "$RESPONSE_FILE"
 
-echo "Selected Repository: $REPO_NAME"
+    if ! echo "$RESPONSE" | jq empty &>/dev/null; then
+      echo "Error: Invalid JSON response received from GitHub." >&2
+      exit 1
+    fi
 
-# Clone or pull repository
-if [ -d "$DIR_NAME" ]; then
-  echo "Directory $DIR_NAME already exists. Pulling latest..." >&2
-  cd "$DIR_NAME"
-  git pull
-else
-  echo "Cloning repository..." >&2
-  AUTH_URL=$(echo "$REPO_URL" | sed "s|https://|https://${GIT_TOKEN}@|")
-  git clone "$AUTH_URL"
-  cd "$DIR_NAME"
+    COUNT=$(echo "$RESPONSE" | jq '. | length' 2>/dev/null || echo 0)
+    if [ "$COUNT" -eq 0 ]; then
+      break
+    fi
+
+    PAGE_REPOS=$(echo "$RESPONSE" | jq -r '.[] | "\(.full_name) \(.html_url)"')
+    if [ -n "$REPOS" ]; then
+      REPOS="${REPOS}
+  ${PAGE_REPOS}"
+    else
+      REPOS="$PAGE_REPOS"
+    fi
+
+    if [ "$COUNT" -lt 100 ]; then
+      break
+    fi
+    PAGE=$((PAGE+1))
+  done
+
+  # Filter out any empty lines
+  REPOS=$(echo "$REPOS" | grep -v '^$')
+
+  if [ -z "$REPOS" ]; then
+    echo "No repositories found." >&2
+    exit 0
+  fi
+
+  # Count repositories
+  REPO_COUNT=$(echo "$REPOS" | wc -l)
+  echo "Fetched $REPO_COUNT repositories." >&2
+
+  # Select repository using fzf (optimized for mobile/narrow screens)
+  SELECTED=$(echo "$REPOS" | fzf --ansi \
+    --header="Select repository to deploy (Type to search, Enter to select, Esc to cancel)" \
+    --with-nth=1 \
+    --preview='echo "URL: {2}"' \
+    --preview-window='down:1:wrap') || SELECTED=""
+
+  if [ -z "$SELECTED" ]; then
+    echo "Selection cancelled." >&2
+    exit 1
+  fi
+
+  REPO_NAME=$(echo "$SELECTED" | awk '{print $1}')
+  REPO_URL=$(echo "$SELECTED" | awk '{print $2}')
+
+  # Extract directory name from URL
+  DIR_NAME=$(basename "$REPO_URL")
+
+  echo "Selected Repository: $REPO_NAME"
+
+  # Clone or pull repository
+  if [ -d "$DIR_NAME" ]; then
+    echo "Directory $DIR_NAME already exists. Pulling latest..." >&2
+    cd "$DIR_NAME"
+    git pull
+  else
+    echo "Cloning repository..." >&2
+    AUTH_URL=$(echo "$REPO_URL" | sed "s|https://|https://${GIT_TOKEN}@|")
+    git clone "$AUTH_URL"
+    cd "$DIR_NAME"
+  fi
+  INSTALL_DEPS=1
 fi
 
 echo "Now in directory: $(pwd)"
 
-# Install requirements.txt if present
-if [ -f requirements.txt ]; then
-  echo "requirements.txt found. Installing Python packages..." >&2
+# Install requirements.txt if present and requested
+if [ "$INSTALL_DEPS" = "1" ] && [ -f requirements.txt ]; then
+  echo "Installing Python packages..." >&2
+  PIP_FLAGS=""
+  if [ "$FORCE_REINSTALL" = "1" ]; then
+    PIP_FLAGS="--force-reinstall --no-cache-dir"
+  fi
+  
   if pip3 install --help | grep -q 'break-system-packages'; then
-    pip3 install -r requirements.txt --break-system-packages
+    pip3 install $PIP_FLAGS -r requirements.txt --break-system-packages
   else
-    pip3 install -r requirements.txt
+    pip3 install $PIP_FLAGS -r requirements.txt
   fi
 fi
 
@@ -292,6 +349,14 @@ fi
 
 # Generate safe screen name
 SCREEN_NAME=$(echo "bot-${DIR_NAME}" | sed 's/[^a-zA-Z0-9_-]/-/g')
+
+# Terminate existing screen session with the same name if running
+if screen -list | grep -q "\.${SCREEN_NAME}\s"; then
+  echo "Stopping existing screen session: $SCREEN_NAME..." >&2
+  screen -XS "$SCREEN_NAME" quit 2>/dev/null || true
+  # Sleep briefly to ensure session is released
+  sleep 1
+fi
 
 # Start file inside screen and detach
 if [[ "$SELECTED_FILE" == *.sh ]]; then
