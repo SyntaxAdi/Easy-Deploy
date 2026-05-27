@@ -3,6 +3,22 @@
 # Exit on error
 set -e
 
+# Auto-update script from git repository
+if command -v git &>/dev/null && git rev-parse --is-inside-work-tree &>/dev/null; then
+  echo "Checking for script updates..." >&2
+  git fetch --quiet origin || true
+  LOCAL=$(git rev-parse HEAD)
+  REMOTE=$(git rev-parse @{u} 2>/dev/null || echo "")
+  if [ -n "$REMOTE" ] && [ "$LOCAL" != "$REMOTE" ]; then
+    echo "Updating script to latest version..." >&2
+    if git pull --quiet; then
+      echo "Script updated. Restarting..." >&2
+      exec "$0" "$@"
+    fi
+  fi
+fi
+
+
 # Update and upgrade Debian/Ubuntu system packages
 if [ -f /etc/debian_version ] || command -v apt-get &>/dev/null; then
   echo "Debian/Ubuntu detected. Updating and upgrading packages..." >&2
@@ -29,10 +45,10 @@ if ! command -v fzf &>/dev/null; then
   sudo apt-get install -y fzf
 fi
 
-# Ensure jq is installed
+# Auto-install jq if missing using apt
 if ! command -v jq &>/dev/null; then
-  echo "Error: jq is required but not installed." >&2
-  exit 1
+  echo "jq not found. Installing via apt..." >&2
+  sudo apt-get install -y jq
 fi
 
 # Fetch all repositories
