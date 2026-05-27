@@ -4,7 +4,7 @@
 set -e
 
 # Auto-update script from git repository
-if command -v git &>/dev/null && git rev-parse --is-inside-work-tree &>/dev/null; then
+if [ -z "$EASY_DEPLOY_UPDATED" ] && command -v git &>/dev/null && git rev-parse --is-inside-work-tree &>/dev/null; then
   echo "Checking for script updates..." >&2
   git fetch --quiet origin || true
   LOCAL=$(git rev-parse HEAD)
@@ -13,7 +13,12 @@ if command -v git &>/dev/null && git rev-parse --is-inside-work-tree &>/dev/null
     echo "Updating script to latest version..." >&2
     if git pull --quiet; then
       echo "Script updated. Restarting..." >&2
-      exec "$0" "$@"
+      export EASY_DEPLOY_UPDATED=1
+      if [ -x "$0" ]; then
+        exec "$0" "$@"
+      else
+        exec bash "$0" "$@"
+      fi
     fi
   fi
 fi
