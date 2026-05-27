@@ -267,36 +267,42 @@ if [ ! -f .env ]; then
   exit 1
 fi
 
-# List python files at root level
-PY_FILES=""
-for f in *.py; do
+# List python and shell files at root level
+LAUNCH_FILES=""
+for f in *.py *.sh; do
   if [ -f "$f" ]; then
-    PY_FILES="${PY_FILES}${f}
+    LAUNCH_FILES="${LAUNCH_FILES}${f}
 "
   fi
 done
-PY_FILES=$(echo "$PY_FILES" | grep -v '^$')
+LAUNCH_FILES=$(echo "$LAUNCH_FILES" | grep -v '^$')
 
-if [ -z "$PY_FILES" ]; then
-  echo "No Python files found in root directory." >&2
+if [ -z "$LAUNCH_FILES" ]; then
+  echo "No Python (.py) or Shell (.sh) files found in root directory." >&2
   exit 1
 fi
 
-# Select main python file using fzf
-MAIN_FILE=$(echo "$PY_FILES" | fzf --ansi --header="Select the main Python file to start" --preview-window='hidden') || MAIN_FILE=""
+# Select main file using fzf
+SELECTED_FILE=$(echo "$LAUNCH_FILES" | fzf --ansi --header="Select the main file to start" --preview-window='hidden') || SELECTED_FILE=""
 
-if [ -z "$MAIN_FILE" ]; then
-  echo "Main file selection cancelled." >&2
+if [ -z "$SELECTED_FILE" ]; then
+  echo "File selection cancelled." >&2
   exit 1
 fi
 
 # Generate safe screen name
 SCREEN_NAME=$(echo "bot-${DIR_NAME}" | sed 's/[^a-zA-Z0-9_-]/-/g')
 
-# Start main file inside screen and detach
-echo "Starting $MAIN_FILE inside screen session $SCREEN_NAME..." >&2
-screen -dmS "$SCREEN_NAME" python3 "$MAIN_FILE"
+# Start file inside screen and detach
+if [[ "$SELECTED_FILE" == *.sh ]]; then
+  echo "Starting $SELECTED_FILE inside screen session $SCREEN_NAME..." >&2
+  screen -dmS "$SCREEN_NAME" bash "$SELECTED_FILE"
+else
+  echo "Starting $SELECTED_FILE inside screen session $SCREEN_NAME..." >&2
+  screen -dmS "$SCREEN_NAME" python3 "$SELECTED_FILE"
+fi
 
 echo "Session started and detached." >&2
 echo "To view session, run: screen -r $SCREEN_NAME" >&2
+
 
