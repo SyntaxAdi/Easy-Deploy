@@ -57,13 +57,33 @@ PAGE=1
 REPOS=""
 
 while true; do
-  RESPONSE=$(curl -s -H "Authorization: token $GIT_TOKEN" \
-    "https://api.github.com/user/repos?per_page=100&page=$PAGE")
-  
-  # Check if request succeeded or if it returned an error (like invalid token)
-  MESSAGE=$(echo "$RESPONSE" | jq -r '.message' 2>/dev/null)
-  if [ "$MESSAGE" != "null" ] && [ -n "$MESSAGE" ]; then
-    echo "GitHub API Error: $MESSAGE" >&2
+  RESPONSE_FILE=$(mktemp)
+  CURL_EXIT=0
+  HTTP_STATUS=$(curl -s -w "%{http_code}" -o "$RESPONSE_FILE" \
+    --connect-timeout 10 --max-time 30 \
+    -H "Authorization: Bearer $GIT_TOKEN" \
+    "https://api.github.com/user/repos?per_page=100&page=$PAGE") || CURL_EXIT=$?
+
+  if [ "$CURL_EXIT" -ne 0 ]; then
+    echo "Error: curl command failed with exit code $CURL_EXIT." >&2
+    echo "Please check your network connection and DNS settings." >&2
+    rm -f "$RESPONSE_FILE"
+    exit 1
+  fi
+
+  if [ "$HTTP_STATUS" -ne 200 ]; then
+    echo "Error: GitHub API returned HTTP status $HTTP_STATUS." >&2
+    cat "$RESPONSE_FILE" >&2
+    echo "" >&2
+    rm -f "$RESPONSE_FILE"
+    exit 1
+  fi
+
+  RESPONSE=$(cat "$RESPONSE_FILE")
+  rm -f "$RESPONSE_FILE"
+
+  if ! echo "$RESPONSE" | jq empty &>/dev/null; then
+    echo "Error: Invalid JSON response received from GitHub." >&2
     exit 1
   fi
 
@@ -94,8 +114,12 @@ if [ -z "$REPOS" ]; then
   exit 0
 fi
 
+# Count repositories
+REPO_COUNT=$(echo "$REPOS" | wc -l)
+echo "Fetched $REPO_COUNT repositories." >&2
+
 # Select repository using fzf
-SELECTED=$(echo "$REPOS" | fzf --ansi --header="Select repository to deploy (Type to search, Enter to select, Esc to cancel)" --preview 'echo "URL: {2}"')
+SELECTED=$(echo "$REPOS" | fzf --ansi --header="Select repository to deploy (Type to search, Enter to select, Esc to cancel)" --preview 'echo "URL: {2}"') || SELECTED=""
 
 if [ -z "$SELECTED" ]; then
   echo "Selection cancelled." >&2
