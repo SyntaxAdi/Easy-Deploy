@@ -3,6 +3,14 @@
 # Exit on error
 set -e
 
+# Update and upgrade Debian/Ubuntu system packages
+if [ -f /etc/debian_version ] || command -v apt-get &>/dev/null; then
+  echo "Debian/Ubuntu detected. Updating and upgrading packages..." >&2
+  sudo apt-get update
+  sudo apt-get upgrade -y
+fi
+
+
 # Load environment variables
 if [ -f .env ]; then
   export $(grep -v '^#' .env | xargs)
