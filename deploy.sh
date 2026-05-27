@@ -258,7 +258,12 @@ EOF
       done
       echo ".env file created." >&2
     fi
-  fi
+fi
+
+# Ensure .env is present before proceeding
+if [ ! -f .env ]; then
+  echo "Error: .env configuration is incomplete. Aborting deployment." >&2
+  exit 1
 fi
 
 # List python files at root level
