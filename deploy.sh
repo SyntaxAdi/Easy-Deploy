@@ -258,6 +258,7 @@ EOF
       done
       echo ".env file created." >&2
     fi
+  fi
 fi
 
 # Ensure .env is present before proceeding
