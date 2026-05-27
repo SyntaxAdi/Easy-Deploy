@@ -179,9 +179,86 @@ if [ -f requirements.txt ]; then
   fi
 fi
 
-# Scan for .env file
+# Scan for .env file or create it
 if [ -f .env ]; then
   echo ".env exists." >&2
+else
+  echo ".env file not found. Let's configure it." >&2
+  while true; do
+    echo "Choose configuration method:" >&2
+    echo "1) Paste entire .env file (multi-line)" >&2
+    echo "2) Enter keys manually (one by one)" >&2
+    if [ -f config.py ]; then
+      echo "3) Scan config.py and fill values" >&2
+    fi
+    read -p "Select option: " ENV_OPT
+    
+    if [ "$ENV_OPT" = "1" ] || [ "$ENV_OPT" = "2" ] || { [ "$ENV_OPT" = "3" ] && [ -f config.py ]; }; then
+      break
+    fi
+    echo "Invalid option." >&2
+  done
+
+  if [ "$ENV_OPT" = "1" ]; then
+    echo "Paste your .env content below, then press Enter and Ctrl+D to save:" >&2
+    cat > .env
+    echo ".env file created." >&2
+  elif [ "$ENV_OPT" = "2" ]; then
+    echo "Enter environment variables (press Enter on empty key to finish):" >&2
+    while true; do
+      read -p "Enter KEY (or KEY=VALUE): " INPUT_KEY
+      if [ -z "$INPUT_KEY" ]; then
+        break
+      fi
+      if [[ "$INPUT_KEY" == *"="* ]]; then
+        echo "$INPUT_KEY" >> .env
+      else
+        read -p "Enter value for $INPUT_KEY: " INPUT_VAL
+        echo "${INPUT_KEY}=${INPUT_VAL}" >> .env
+      fi
+    done
+    echo ".env file created." >&2
+  elif [ "$ENV_OPT" = "3" ] && [ -f config.py ]; then
+    echo "Scanning config.py for variables..." >&2
+    VARS=$(python3 - <<'EOF'
+import re
+try:
+    with open("config.py", "r", encoding="utf-8") as f:
+        content = f.read()
+    vars_found = []
+    vars_found.extend(re.findall(r"^[A-Z_][A-Z0-9_]*(?=\s*=)", content, re.MULTILINE))
+    vars_found.extend(re.findall(r"(?:getenv|environ\.get)\([\"\']([A-Z_][A-Z0-9_]*)[\"\']", content))
+    vars_found.extend(re.findall(r"environ\[[\"\']([A-Z_][A-Z0-9_]*)[\"\']\]", content))
+    for v in sorted(list(set(vars_found))):
+        print(v)
+except Exception:
+    pass
+EOF
+)
+    if [ -z "$VARS" ]; then
+      echo "No variables found in config.py. Switching to manual mode." >&2
+      echo "Enter environment variables (press Enter on empty key to finish):" >&2
+      while true; do
+        read -p "Enter KEY (or KEY=VALUE): " INPUT_KEY
+        if [ -z "$INPUT_KEY" ]; then
+          break
+        fi
+        if [[ "$INPUT_KEY" == *"="* ]]; then
+          echo "$INPUT_KEY" >> .env
+        else
+          read -p "Enter value for $INPUT_KEY: " INPUT_VAL
+          echo "${INPUT_KEY}=${INPUT_VAL}" >> .env
+        fi
+      done
+    else
+      echo "Provide values for discovered variables:" >&2
+      for v in $VARS; do
+        read -p "Value for $v: " VAL
+        echo "${v}=${VAL}" >> .env
+      done
+      echo ".env file created." >&2
+    fi
+  fi
 fi
 
 # List python files at root level
