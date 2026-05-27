@@ -138,5 +138,22 @@ fi
 REPO_NAME=$(echo "$SELECTED" | awk '{print $1}')
 REPO_URL=$(echo "$SELECTED" | awk '{print $2}')
 
+# Extract directory name from URL
+DIR_NAME=$(basename "$REPO_URL")
+
 echo "Selected Repository: $REPO_NAME"
-echo "Repository URL: $REPO_URL"
+
+# Clone or pull repository
+if [ -d "$DIR_NAME" ]; then
+  echo "Directory $DIR_NAME already exists. Pulling latest..." >&2
+  cd "$DIR_NAME"
+  git pull
+else
+  echo "Cloning repository..." >&2
+  AUTH_URL=$(echo "$REPO_URL" | sed "s|https://|https://${GIT_TOKEN}@|")
+  git clone "$AUTH_URL"
+  cd "$DIR_NAME"
+fi
+
+echo "Now in directory: $(pwd)"
+
