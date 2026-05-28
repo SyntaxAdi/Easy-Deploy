@@ -540,7 +540,7 @@ echo "To view session, run: screen -r $SCREEN_NAME" >&2
 if [ -n "$NEON_DB_URL" ] && [ -z "$DB_DEPLOYED" ]; then
   read -p "Would you like to save/update this configuration in Neon database? (y/N): " SAVE_CONF
   if [[ "$SAVE_CONF" =~ ^[Yy]$ ]]; then
-    read -p "Enter a unique name for this deployment configuration: " CONF_NAME_INPUT
+    CONF_NAME_INPUT="$DIR_NAME"
     if [ -n "$CONF_NAME_INPUT" ]; then
       echo "Saving configuration to Neon..." >&2
       if [ -z "$REPO_URL" ]; then
