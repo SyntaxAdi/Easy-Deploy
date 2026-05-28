@@ -136,22 +136,32 @@ EOF
     echo "No saved configurations found. Switching to clone mode..." >&2
     OP_MODE="1"
   else
-    # Select using fzf
-    SELECTED_CONFIG=$(echo "$CONFIGS" | fzf --ansi --header="Select configuration to deploy" --preview-window='hidden') || SELECTED_CONFIG=""
-    if [ -z "$SELECTED_CONFIG" ]; then
+    # Select using fzf with multi-selection enabled
+    SELECTED_CONFIGS=$(echo "$CONFIGS" | fzf --ansi -m --header="Select configuration(s) to deploy (Press Tab to select multiple, Enter to confirm)" --preview-window='hidden') || SELECTED_CONFIGS=""
+    if [ -z "$SELECTED_CONFIGS" ]; then
       echo "Selection cancelled." >&2
       exit 1
     fi
     
-    CONFIG_NAME=$(echo "$SELECTED_CONFIG" | cut -f1)
-    REPO_URL=$(echo "$SELECTED_CONFIG" | cut -f2)
-    DIR_NAME=$(echo "$SELECTED_CONFIG" | cut -f3)
-    SELECTED_FILE=$(echo "$SELECTED_CONFIG" | cut -f4)
-    
-    echo "Selected configuration: $CONFIG_NAME" >&2
-    
-    # Retrieve env content from DB
-    ENV_CONTENT=$(export CONFIG_NAME; python3 - <<'EOF'
+    ROOT_DIR=$(pwd)
+
+    echo "$SELECTED_CONFIGS" | while read -r LINE; do
+      if [ -z "$LINE" ]; then
+        continue
+      fi
+      
+      cd "$ROOT_DIR"
+      
+      CONFIG_NAME=$(echo "$LINE" | cut -f1)
+      REPO_URL=$(echo "$LINE" | cut -f2)
+      DIR_NAME=$(echo "$LINE" | cut -f3)
+      SELECTED_FILE=$(echo "$LINE" | cut -f4)
+      
+      echo "----------------------------------------" >&2
+      echo "Deploying configuration: $CONFIG_NAME..." >&2
+      
+      # Retrieve env content from DB
+      ENV_CONTENT=$(export CONFIG_NAME; python3 - <<'EOF'
 import sys, os, urllib.parse, pg8000.dbapi
 db_url = os.environ.get("NEON_DB_URL")
 cfg_name = os.environ.get("CONFIG_NAME")
@@ -172,25 +182,55 @@ except Exception:
 EOF
 )
 
-    # Perform deployment using saved configuration
-    if [ -d "$DIR_NAME" ]; then
-      echo "Directory $DIR_NAME already exists. Pulling latest..." >&2
-      cd "$DIR_NAME"
-      git pull
-    else
-      echo "Cloning repository..." >&2
-      AUTH_URL=$(echo "$REPO_URL" | sed "s|https://|https://${GIT_TOKEN}@|")
-      git clone "$AUTH_URL" "$DIR_NAME"
-      cd "$DIR_NAME"
-    fi
+      # Perform deployment using saved configuration
+      if [ -d "$DIR_NAME" ]; then
+        echo "Directory $DIR_NAME already exists. Pulling latest..." >&2
+        cd "$DIR_NAME"
+        git pull
+      else
+        echo "Cloning repository..." >&2
+        AUTH_URL=$(echo "$REPO_URL" | sed "s|https://|https://${GIT_TOKEN}@|")
+        git clone "$AUTH_URL" "$DIR_NAME"
+        cd "$DIR_NAME"
+      fi
+      
+      # Write saved .env content
+      echo "$ENV_CONTENT" > .env
+      echo ".env file restored from database." >&2
+      
+      # Install requirements.txt if present
+      if [ -f requirements.txt ]; then
+        echo "Installing Python packages..." >&2
+        if pip3 install --help | grep -q 'break-system-packages'; then
+          pip3 install -r requirements.txt --break-system-packages
+        else
+          pip3 install -r requirements.txt
+        fi
+      fi
+
+      # Generate safe screen name
+      SCREEN_NAME=$(echo "bot-${DIR_NAME}" | sed 's/[^a-zA-Z0-9_-]/-/g')
+
+      # Terminate existing screen session with the same name if running
+      if screen -list | grep -q "\.${SCREEN_NAME}\s"; then
+        echo "Stopping existing screen session: $SCREEN_NAME..." >&2
+        screen -XS "$SCREEN_NAME" quit 2>/dev/null || true
+        sleep 1
+      fi
+
+      # Start file inside screen and detach
+      if [[ "$SELECTED_FILE" == *.sh ]]; then
+        echo "Starting $SELECTED_FILE inside screen session $SCREEN_NAME..." >&2
+        screen -dmS "$SCREEN_NAME" bash "$SELECTED_FILE"
+      else
+        echo "Starting $SELECTED_FILE inside screen session $SCREEN_NAME..." >&2
+        screen -dmS "$SCREEN_NAME" python3 "$SELECTED_FILE"
+      fi
+
+      echo "Session started and detached for: $SCREEN_NAME" >&2
+    done
     
-    # Write saved .env content
-    echo "$ENV_CONTENT" > .env
-    echo ".env file restored from database." >&2
-    
-    # Flag dependencies install
-    INSTALL_DEPS=1
-    DB_DEPLOYED=1
+    exit 0
   fi
 fi
 
