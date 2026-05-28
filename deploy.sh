@@ -72,7 +72,127 @@ fi
 echo "Choose operation mode:" >&2
 echo "1) Clone and deploy a new repository" >&2
 echo "2) Manage and redeploy an existing cloned repository" >&2
-read -p "Select option (1/2): " OP_MODE
+if [ -n "$NEON_DB_URL" ]; then
+  echo "3) Deploy from saved Neon database configuration (One-click deploy)" >&2
+fi
+while true; do
+  read -p "Select option: " OP_MODE
+  if [ "$OP_MODE" = "1" ] || [ "$OP_MODE" = "2" ] || { [ "$OP_MODE" = "3" ] && [ -n "$NEON_DB_URL" ]; }; then
+    break
+  fi
+  echo "Invalid option." >&2
+done
+
+if [ "$OP_MODE" = "3" ] && [ -n "$NEON_DB_URL" ]; then
+  echo "Fetching configurations from Neon database..." >&2
+  CONFIGS=$(python3 - <<'EOF'
+import sys, os, urllib.parse
+db_url = os.environ.get("NEON_DB_URL")
+if not db_url:
+    print("Error: NEON_DB_URL not set.", file=sys.stderr)
+    sys.exit(1)
+
+try:
+    import pg8000.dbapi
+except ImportError:
+    import subprocess
+    pip_cmd = [sys.executable, "-m", "pip", "install", "pg8000"]
+    help_out = subprocess.run([sys.executable, "-m", "pip", "install", "--help"], capture_output=True, text=True).stdout
+    if "break-system-packages" in help_out:
+        pip_cmd.append("--break-system-packages")
+    subprocess.run(pip_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    import pg8000.dbapi
+
+try:
+    url = urllib.parse.urlparse(db_url)
+    conn = pg8000.dbapi.connect(
+        user=url.username,
+        password=url.password,
+        host=url.hostname,
+        port=url.port or 5432,
+        database=url.path[1:],
+        ssl_context=True
+    )
+    cursor = conn.cursor()
+    cursor.execute("CREATE TABLE IF NOT EXISTS deployments (id SERIAL PRIMARY KEY, name VARCHAR(255) UNIQUE NOT NULL, repo_url TEXT NOT NULL, folder_name VARCHAR(255) NOT NULL, env_content TEXT NOT NULL, start_cmd VARCHAR(255) NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
+    conn.commit()
+    
+    cursor.execute("SELECT name, repo_url, folder_name, start_cmd FROM deployments ORDER BY name")
+    rows = cursor.fetchall()
+    if not rows:
+        print("No configurations found.", file=sys.stderr)
+        sys.exit(0)
+    for r in rows:
+        print(f"{r[0]}\t{r[1]}\t{r[2]}\t{r[3]}")
+    cursor.close()
+    conn.close()
+except Exception as e:
+    print(f"Database error: {e}", file=sys.stderr)
+    sys.exit(1)
+EOF
+)
+
+  if [ -z "$CONFIGS" ] || [ "$CONFIGS" = "No configurations found." ]; then
+    echo "No saved configurations found. Switching to clone mode..." >&2
+    OP_MODE="1"
+  else
+    # Select using fzf
+    SELECTED_CONFIG=$(echo "$CONFIGS" | fzf --ansi --header="Select configuration to deploy" --preview-window='hidden') || SELECTED_CONFIG=""
+    if [ -z "$SELECTED_CONFIG" ]; then
+      echo "Selection cancelled." >&2
+      exit 1
+    fi
+    
+    CONFIG_NAME=$(echo "$SELECTED_CONFIG" | cut -f1)
+    REPO_URL=$(echo "$SELECTED_CONFIG" | cut -f2)
+    DIR_NAME=$(echo "$SELECTED_CONFIG" | cut -f3)
+    SELECTED_FILE=$(echo "$SELECTED_CONFIG" | cut -f4)
+    
+    echo "Selected configuration: $CONFIG_NAME" >&2
+    
+    # Retrieve env content from DB
+    ENV_CONTENT=$(export CONFIG_NAME; python3 - <<'EOF'
+import sys, os, urllib.parse, pg8000.dbapi
+db_url = os.environ.get("NEON_DB_URL")
+cfg_name = os.environ.get("CONFIG_NAME")
+try:
+    url = urllib.parse.urlparse(db_url)
+    conn = pg8000.dbapi.connect(
+        user=url.username, password=url.password, host=url.hostname, port=url.port or 5432, database=url.path[1:], ssl_context=True
+    )
+    cursor = conn.cursor()
+    cursor.execute("SELECT env_content FROM deployments WHERE name = %s", [cfg_name])
+    row = cursor.fetchone()
+    if row:
+        print(row[0], end="")
+    cursor.close()
+    conn.close()
+except Exception:
+    sys.exit(1)
+EOF
+)
+
+    # Perform deployment using saved configuration
+    if [ -d "$DIR_NAME" ]; then
+      echo "Directory $DIR_NAME already exists. Pulling latest..." >&2
+      cd "$DIR_NAME"
+      git pull
+    else
+      echo "Cloning repository..." >&2
+      AUTH_URL=$(echo "$REPO_URL" | sed "s|https://|https://${GIT_TOKEN}@|")
+      git clone "$AUTH_URL" "$DIR_NAME"
+      cd "$DIR_NAME"
+    fi
+    
+    # Write saved .env content
+    echo "$ENV_CONTENT" > .env
+    echo ".env file restored from database." >&2
+    
+    # Flag dependencies install
+    INSTALL_DEPS=1
+    DB_DEPLOYED=1
+  fi
+fi
 
 if [ "$OP_MODE" = "2" ]; then
   # Find existing cloned repositories
@@ -200,8 +320,10 @@ if [ "$OP_MODE" = "1" ]; then
   REPO_NAME=$(echo "$SELECTED" | awk '{print $1}')
   REPO_URL=$(echo "$SELECTED" | awk '{print $2}')
 
-  # Extract directory name from URL
-  DIR_NAME=$(basename "$REPO_URL")
+  # Extract default directory name from URL
+  DEFAULT_DIR=$(basename "$REPO_URL")
+  read -p "Enter target folder name [$DEFAULT_DIR]: " CUSTOM_DIR
+  DIR_NAME="${CUSTOM_DIR:-$DEFAULT_DIR}"
 
   echo "Selected Repository: $REPO_NAME"
 
@@ -213,7 +335,7 @@ if [ "$OP_MODE" = "1" ]; then
   else
     echo "Cloning repository..." >&2
     AUTH_URL=$(echo "$REPO_URL" | sed "s|https://|https://${GIT_TOKEN}@|")
-    git clone "$AUTH_URL"
+    git clone "$AUTH_URL" "$DIR_NAME"
     cd "$DIR_NAME"
   fi
   INSTALL_DEPS=1
