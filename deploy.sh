@@ -278,90 +278,111 @@ if [ "$OP_MODE" = "2" ]; then
 fi
 
 if [ "$OP_MODE" = "1" ]; then
-  # Fetch all repositories
-  echo "Fetching GitHub repositories..." >&2
-  PAGE=1
-  REPOS=""
-
+  # Choose clone source
+  echo "Select clone source:" >&2
+  echo "1) Select from your GitHub repositories (interactive)" >&2
+  echo "2) Enter custom repository URL manually" >&2
   while true; do
-    RESPONSE_FILE=$(mktemp)
-    CURL_EXIT=0
-    HTTP_STATUS=$(curl -s -w "%{http_code}" -o "$RESPONSE_FILE" \
-      --connect-timeout 10 --max-time 30 \
-      -H "Authorization: Bearer $GIT_TOKEN" \
-      "https://api.github.com/user/repos?per_page=100&page=$PAGE") || CURL_EXIT=$?
-
-    if [ "$CURL_EXIT" -ne 0 ]; then
-      echo "Error: curl command failed with exit code $CURL_EXIT." >&2
-      echo "Please check your network connection and DNS settings." >&2
-      rm -f "$RESPONSE_FILE"
-      exit 1
-    fi
-
-    if [ "$HTTP_STATUS" -ne 200 ]; then
-      echo "Error: GitHub API returned HTTP status $HTTP_STATUS." >&2
-      cat "$RESPONSE_FILE" >&2
-      echo "" >&2
-      rm -f "$RESPONSE_FILE"
-      exit 1
-    fi
-
-    RESPONSE=$(cat "$RESPONSE_FILE")
-    rm -f "$RESPONSE_FILE"
-
-    if ! echo "$RESPONSE" | jq empty &>/dev/null; then
-      echo "Error: Invalid JSON response received from GitHub." >&2
-      exit 1
-    fi
-
-    COUNT=$(echo "$RESPONSE" | jq '. | length' 2>/dev/null || echo 0)
-    if [ "$COUNT" -eq 0 ]; then
+    read -p "Select option (1/2): " CLONE_SRC
+    if [ "$CLONE_SRC" = "1" ] || [ "$CLONE_SRC" = "2" ]; then
       break
     fi
-
-    PAGE_REPOS=$(echo "$RESPONSE" | jq -r '.[] | "\(.full_name) \(.html_url)"')
-    if [ -n "$REPOS" ]; then
-      REPOS="${REPOS}
-  ${PAGE_REPOS}"
-    else
-      REPOS="$PAGE_REPOS"
-    fi
-
-    if [ "$COUNT" -lt 100 ]; then
-      break
-    fi
-    PAGE=$((PAGE+1))
+    echo "Invalid option." >&2
   done
 
-  # Filter out any empty lines
-  REPOS=$(echo "$REPOS" | grep -v '^$')
+  if [ "$CLONE_SRC" = "2" ]; then
+    read -p "Enter repository URL (HTTPS): " REPO_URL
+    if [ -z "$REPO_URL" ]; then
+      echo "Error: URL cannot be empty." >&2
+      exit 1
+    fi
+    REPO_NAME=$(basename "$REPO_URL" .git)
+  else
+    # Fetch all repositories
+    echo "Fetching GitHub repositories..." >&2
+    PAGE=1
+    REPOS=""
 
-  if [ -z "$REPOS" ]; then
-    echo "No repositories found." >&2
-    exit 0
+    while true; do
+      RESPONSE_FILE=$(mktemp)
+      CURL_EXIT=0
+      HTTP_STATUS=$(curl -s -w "%{http_code}" -o "$RESPONSE_FILE" \
+        --connect-timeout 10 --max-time 30 \
+        -H "Authorization: Bearer $GIT_TOKEN" \
+        "https://api.github.com/user/repos?per_page=100&page=$PAGE") || CURL_EXIT=$?
+
+      if [ "$CURL_EXIT" -ne 0 ]; then
+        echo "Error: curl command failed with exit code $CURL_EXIT." >&2
+        echo "Please check your network connection and DNS settings." >&2
+        rm -f "$RESPONSE_FILE"
+        exit 1
+      fi
+
+      if [ "$HTTP_STATUS" -ne 200 ]; then
+        echo "Error: GitHub API returned HTTP status $HTTP_STATUS." >&2
+        cat "$RESPONSE_FILE" >&2
+        echo "" >&2
+        rm -f "$RESPONSE_FILE"
+        exit 1
+      fi
+
+      RESPONSE=$(cat "$RESPONSE_FILE")
+      rm -f "$RESPONSE_FILE"
+
+      if ! echo "$RESPONSE" | jq empty &>/dev/null; then
+        echo "Error: Invalid JSON response received from GitHub." >&2
+        exit 1
+      fi
+
+      COUNT=$(echo "$RESPONSE" | jq '. | length' 2>/dev/null || echo 0)
+      if [ "$COUNT" -eq 0 ]; then
+        break
+      fi
+
+      PAGE_REPOS=$(echo "$RESPONSE" | jq -r '.[] | "\(.full_name) \(.html_url)"')
+      if [ -n "$REPOS" ]; then
+        REPOS="${REPOS}
+    ${PAGE_REPOS}"
+      else
+        REPOS="$PAGE_REPOS"
+      fi
+
+      if [ "$COUNT" -lt 100 ]; then
+        break
+      fi
+      PAGE=$((PAGE+1))
+    done
+
+    # Filter out any empty lines
+    REPOS=$(echo "$REPOS" | grep -v '^$')
+
+    if [ -z "$REPOS" ]; then
+      echo "No repositories found." >&2
+      exit 0
+    fi
+
+    # Count repositories
+    REPO_COUNT=$(echo "$REPOS" | wc -l)
+    echo "Fetched $REPO_COUNT repositories." >&2
+
+    # Select repository using fzf (optimized for mobile/narrow screens)
+    SELECTED=$(echo "$REPOS" | fzf --ansi \
+      --header="Select repository to deploy (Type to search, Enter to select, Esc to cancel)" \
+      --with-nth=1 \
+      --preview='echo "URL: {2}"' \
+      --preview-window='down:1:wrap') || SELECTED=""
+
+    if [ -z "$SELECTED" ]; then
+      echo "Selection cancelled." >&2
+      exit 1
+    fi
+
+    REPO_NAME=$(echo "$SELECTED" | awk '{print $1}')
+    REPO_URL=$(echo "$SELECTED" | awk '{print $2}')
   fi
-
-  # Count repositories
-  REPO_COUNT=$(echo "$REPOS" | wc -l)
-  echo "Fetched $REPO_COUNT repositories." >&2
-
-  # Select repository using fzf (optimized for mobile/narrow screens)
-  SELECTED=$(echo "$REPOS" | fzf --ansi \
-    --header="Select repository to deploy (Type to search, Enter to select, Esc to cancel)" \
-    --with-nth=1 \
-    --preview='echo "URL: {2}"' \
-    --preview-window='down:1:wrap') || SELECTED=""
-
-  if [ -z "$SELECTED" ]; then
-    echo "Selection cancelled." >&2
-    exit 1
-  fi
-
-  REPO_NAME=$(echo "$SELECTED" | awk '{print $1}')
-  REPO_URL=$(echo "$SELECTED" | awk '{print $2}')
 
   # Extract default directory name from URL
-  DEFAULT_DIR=$(basename "$REPO_URL")
+  DEFAULT_DIR=$(basename "$REPO_URL" .git)
   read -p "Enter target folder name [$DEFAULT_DIR]: " CUSTOM_DIR
   DIR_NAME="${CUSTOM_DIR:-$DEFAULT_DIR}"
 
@@ -374,7 +395,11 @@ if [ "$OP_MODE" = "1" ]; then
     git pull
   else
     echo "Cloning repository..." >&2
-    AUTH_URL=$(echo "$REPO_URL" | sed "s|https://|https://${GIT_TOKEN}@|")
+    if [[ "$REPO_URL" == *"github.com"* ]] && [[ "$REPO_URL" != *"@"* ]]; then
+      AUTH_URL=$(echo "$REPO_URL" | sed "s|https://|https://${GIT_TOKEN}@|")
+    else
+      AUTH_URL="$REPO_URL"
+    fi
     git clone "$AUTH_URL" "$DIR_NAME"
     cd "$DIR_NAME"
   fi
