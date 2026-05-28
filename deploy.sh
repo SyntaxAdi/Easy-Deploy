@@ -358,48 +358,49 @@ if [ "$INSTALL_DEPS" = "1" ] && [ -f requirements.txt ]; then
   fi
 fi
 
-# Scan for .env file or create it
-if [ -f .env ]; then
-  echo ".env exists." >&2
-else
-  echo ".env file not found. Let's configure it." >&2
-  while true; do
-    echo "Choose configuration method:" >&2
-    echo "1) Paste entire .env file (multi-line)" >&2
-    echo "2) Enter keys manually (one by one)" >&2
-    if [ -f config.py ]; then
-      echo "3) Scan config.py and fill values" >&2
-    fi
-    read -p "Select option: " ENV_OPT
-    
-    if [ "$ENV_OPT" = "1" ] || [ "$ENV_OPT" = "2" ] || { [ "$ENV_OPT" = "3" ] && [ -f config.py ]; }; then
-      break
-    fi
-    echo "Invalid option." >&2
-  done
-
-  if [ "$ENV_OPT" = "1" ]; then
-    echo "Paste your .env content below, then press Enter and Ctrl+D to save:" >&2
-    cat > .env
-    echo ".env file created." >&2
-  elif [ "$ENV_OPT" = "2" ]; then
-    echo "Enter environment variables (press Enter on empty key to finish):" >&2
+if [ -z "$DB_DEPLOYED" ]; then
+  # Scan for .env file or create it
+  if [ -f .env ]; then
+    echo ".env exists." >&2
+  else
+    echo ".env file not found. Let's configure it." >&2
     while true; do
-      read -p "Enter KEY (or KEY=VALUE): " INPUT_KEY
-      if [ -z "$INPUT_KEY" ]; then
+      echo "Choose configuration method:" >&2
+      echo "1) Paste entire .env file (multi-line)" >&2
+      echo "2) Enter keys manually (one by one)" >&2
+      if [ -f config.py ]; then
+        echo "3) Scan config.py and fill values" >&2
+      fi
+      read -p "Select option: " ENV_OPT
+      
+      if [ "$ENV_OPT" = "1" ] || [ "$ENV_OPT" = "2" ] || { [ "$ENV_OPT" = "3" ] && [ -f config.py ]; }; then
         break
       fi
-      if [[ "$INPUT_KEY" == *"="* ]]; then
-        echo "$INPUT_KEY" >> .env
-      else
-        read -p "Enter value for $INPUT_KEY: " INPUT_VAL
-        echo "${INPUT_KEY}=${INPUT_VAL}" >> .env
-      fi
+      echo "Invalid option." >&2
     done
-    echo ".env file created." >&2
-  elif [ "$ENV_OPT" = "3" ] && [ -f config.py ]; then
-    echo "Scanning config.py for variables..." >&2
-    VARS=$(python3 - <<'EOF'
+
+    if [ "$ENV_OPT" = "1" ]; then
+      echo "Paste your .env content below, then press Enter and Ctrl+D to save:" >&2
+      cat > .env
+      echo ".env file created." >&2
+    elif [ "$ENV_OPT" = "2" ]; then
+      echo "Enter environment variables (press Enter on empty key to finish):" >&2
+      while true; do
+        read -p "Enter KEY (or KEY=VALUE): " INPUT_KEY
+        if [ -z "$INPUT_KEY" ]; then
+          break
+        fi
+        if [[ "$INPUT_KEY" == *"="* ]]; then
+          echo "$INPUT_KEY" >> .env
+        else
+          read -p "Enter value for $INPUT_KEY: " INPUT_VAL
+          echo "${INPUT_KEY}=${INPUT_VAL}" >> .env
+        fi
+      done
+      echo ".env file created." >&2
+    elif [ "$ENV_OPT" = "3" ] && [ -f config.py ]; then
+      echo "Scanning config.py for variables..." >&2
+      VARS=$(python3 - <<'EOF'
 import re
 try:
     with open("config.py", "r", encoding="utf-8") as f:
@@ -414,28 +415,29 @@ except Exception:
     pass
 EOF
 )
-    if [ -z "$VARS" ]; then
-      echo "No variables found in config.py. Switching to manual mode." >&2
-      echo "Enter environment variables (press Enter on empty key to finish):" >&2
-      while true; do
-        read -p "Enter KEY (or KEY=VALUE): " INPUT_KEY
-        if [ -z "$INPUT_KEY" ]; then
-          break
-        fi
-        if [[ "$INPUT_KEY" == *"="* ]]; then
-          echo "$INPUT_KEY" >> .env
-        else
-          read -p "Enter value for $INPUT_KEY: " INPUT_VAL
-          echo "${INPUT_KEY}=${INPUT_VAL}" >> .env
-        fi
-      done
-    else
-      echo "Provide values for discovered variables:" >&2
-      for v in $VARS; do
-        read -p "Value for $v: " VAL
-        echo "${v}=${VAL}" >> .env
-      done
-      echo ".env file created." >&2
+      if [ -z "$VARS" ]; then
+        echo "No variables found in config.py. Switching to manual mode." >&2
+        echo "Enter environment variables (press Enter on empty key to finish):" >&2
+        while true; do
+          read -p "Enter KEY (or KEY=VALUE): " INPUT_KEY
+          if [ -z "$INPUT_KEY" ]; then
+            break
+          fi
+          if [[ "$INPUT_KEY" == *"="* ]]; then
+            echo "$INPUT_KEY" >> .env
+          else
+            read -p "Enter value for $INPUT_KEY: " INPUT_VAL
+            echo "${INPUT_KEY}=${INPUT_VAL}" >> .env
+          fi
+        done
+      else
+        echo "Provide values for discovered variables:" >&2
+        for v in $VARS; do
+          read -p "Value for $v: " VAL
+          echo "${v}=${VAL}" >> .env
+        done
+        echo ".env file created." >&2
+      fi
     fi
   fi
 fi
@@ -446,27 +448,29 @@ if [ ! -f .env ]; then
   exit 1
 fi
 
-# List python and shell files at root level
-LAUNCH_FILES=""
-for f in *.py *.sh; do
-  if [ -f "$f" ]; then
-    LAUNCH_FILES="${LAUNCH_FILES}${f}
+if [ -z "$DB_DEPLOYED" ]; then
+  # List python and shell files at root level
+  LAUNCH_FILES=""
+  for f in *.py *.sh; do
+    if [ -f "$f" ]; then
+      LAUNCH_FILES="${LAUNCH_FILES}${f}
 "
+    fi
+  done
+  LAUNCH_FILES=$(echo "$LAUNCH_FILES" | grep -v '^$')
+
+  if [ -z "$LAUNCH_FILES" ]; then
+    echo "No Python (.py) or Shell (.sh) files found in root directory." >&2
+    exit 1
   fi
-done
-LAUNCH_FILES=$(echo "$LAUNCH_FILES" | grep -v '^$')
 
-if [ -z "$LAUNCH_FILES" ]; then
-  echo "No Python (.py) or Shell (.sh) files found in root directory." >&2
-  exit 1
-fi
+  # Select main file using fzf
+  SELECTED_FILE=$(echo "$LAUNCH_FILES" | fzf --ansi --header="Select the main file to start" --preview-window='hidden') || SELECTED_FILE=""
 
-# Select main file using fzf
-SELECTED_FILE=$(echo "$LAUNCH_FILES" | fzf --ansi --header="Select the main file to start" --preview-window='hidden') || SELECTED_FILE=""
-
-if [ -z "$SELECTED_FILE" ]; then
-  echo "File selection cancelled." >&2
-  exit 1
+  if [ -z "$SELECTED_FILE" ]; then
+    echo "File selection cancelled." >&2
+    exit 1
+  fi
 fi
 
 # Generate safe screen name
@@ -491,5 +495,63 @@ fi
 
 echo "Session started and detached." >&2
 echo "To view session, run: screen -r $SCREEN_NAME" >&2
+
+# Save deployment configuration to Neon if enabled
+if [ -n "$NEON_DB_URL" ] && [ -z "$DB_DEPLOYED" ]; then
+  read -p "Would you like to save/update this configuration in Neon database? (y/N): " SAVE_CONF
+  if [[ "$SAVE_CONF" =~ ^[Yy]$ ]]; then
+    read -p "Enter a unique name for this deployment configuration: " CONF_NAME_INPUT
+    if [ -n "$CONF_NAME_INPUT" ]; then
+      echo "Saving configuration to Neon..." >&2
+      if [ -z "$REPO_URL" ]; then
+        REPO_URL=$(git config --get remote.origin.url 2>/dev/null || echo "")
+      fi
+      ENV_VALS=$(cat .env 2>/dev/null || echo "")
+      
+      export CONF_NAME_INPUT REPO_URL DIR_NAME SELECTED_FILE ENV_VALS
+      python3 - <<'EOF'
+import sys, os, urllib.parse
+db_url = os.environ.get("NEON_DB_URL")
+cfg_name = os.environ.get("CONF_NAME_INPUT")
+repo_url = os.environ.get("REPO_URL")
+folder_name = os.environ.get("DIR_NAME")
+env_content = os.environ.get("ENV_VALS")
+start_cmd = os.environ.get("SELECTED_FILE")
+
+try:
+    import pg8000.dbapi
+except ImportError:
+    import subprocess
+    pip_cmd = [sys.executable, "-m", "pip", "install", "pg8000"]
+    help_out = subprocess.run([sys.executable, "-m", "pip", "install", "--help"], capture_output=True, text=True).stdout
+    if "break-system-packages" in help_out:
+        pip_cmd.append("--break-system-packages")
+    subprocess.run(pip_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    import pg8000.dbapi
+
+try:
+    url = urllib.parse.urlparse(db_url)
+    conn = pg8000.dbapi.connect(
+        user=url.username, password=url.password, host=url.hostname, port=url.port or 5432, database=url.path[1:], ssl_context=True
+    )
+    cursor = conn.cursor()
+    cursor.execute("CREATE TABLE IF NOT EXISTS deployments (id SERIAL PRIMARY KEY, name VARCHAR(255) UNIQUE NOT NULL, repo_url TEXT NOT NULL, folder_name VARCHAR(255) NOT NULL, env_content TEXT NOT NULL, start_cmd VARCHAR(255) NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
+    conn.commit()
+    
+    cursor.execute(
+        "INSERT INTO deployments (name, repo_url, folder_name, env_content, start_cmd) VALUES (%s, %s, %s, %s, %s) "
+        "ON CONFLICT (name) DO UPDATE SET repo_url = EXCLUDED.repo_url, folder_name = EXCLUDED.folder_name, env_content = EXCLUDED.env_content, start_cmd = EXCLUDED.start_cmd",
+        [cfg_name, repo_url, folder_name, env_content, start_cmd]
+    )
+    conn.commit()
+    print("Configuration saved successfully.", file=sys.stderr)
+    cursor.close()
+    conn.close()
+except Exception as e:
+    print(f"Error saving configuration: {e}", file=sys.stderr)
+EOF
+    fi
+  fi
+fi
 
 
